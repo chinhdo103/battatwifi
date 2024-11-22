@@ -1,4 +1,3 @@
-# Kiểm tra quyền quản trị (admin)
 $runAsAdmin = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $adminRole = [Security.Principal.WindowsBuiltInRole]::Administrator
 
@@ -8,52 +7,17 @@ if (-not $runAsAdmin.IsInRole($adminRole)) {
     Start-Process powershell -ArgumentList $arguments -Verb runAs
     Exit
 }
-
-# Nếu đã có quyền admin, tiếp tục chạy script
-Write-Host "Script đang chạy với quyền admin!" -ForegroundColor Green
-
-# Đăng nhập
-$validUser = $false
-$maxAttempts = 3
-$attempt = 0
-$userName = "admin"
-$password = "xuanthanh"
-
-do {
-    $userInput = Read-Host "Nhap tai khoan"
-    $passInput = Read-Host "Nhap mat khau" -AsSecureString
-    $unsecurePass = [System.Net.NetworkCredential]::new("", $passInput).Password
-    
-    if ($userInput -eq $userName -and $unsecurePass -eq $password) {
-        Write-Host "Dang nhap thanh cong!" -ForegroundColor Green
-        $validUser = $true
-    } else {
-        $attempt++
-        Write-Host "Tai khoan hoac mat khau khong dung. Vui long thu lai!" -ForegroundColor Red
-        if ($attempt -ge $maxAttempts) {
-            Write-Host "Ban da nhap sai qua so lan quy dinh. Khoa chuc nang!" -ForegroundColor Red
-            Exit
-        }
-    }
-} while (-not $validUser)
-
-# Hàm hiển thị menu với giao diện đẹp hơn
+# Hàm hiển thị menu
 function Show-Menu {
     Clear-Host
-    $menuTitle = "============================================"
-    $header = "QUAN LY HEN GIO BAT/TAT WIFI"
-    
-    # In tiêu đề căn giữa với màu sắc nổi bật
-    Write-Host ($menuTitle.PadLeft(($menuTitle.Length + $header.Length) / 2)) -ForegroundColor Cyan
-    Write-Host $header.PadLeft(($menuTitle.Length + $header.Length) / 2) -ForegroundColor Yellow
-    Write-Host ($menuTitle.PadLeft(($menuTitle.Length + $header.Length) / 2)) -ForegroundColor Cyan
-
-    # In các lựa chọn với màu sắc
-    Write-Host "1. Nhap gio hen tat va bat Wi-Fi" -ForegroundColor Green
-    Write-Host "2. Hien thi gio da hen" -ForegroundColor Green
-    Write-Host "3. Xoa tat ca gio da hen" -ForegroundColor Green
-    Write-Host "0. Thoat" -ForegroundColor Red
-    Write-Host ($menuTitle.PadLeft(($menuTitle.Length + $header.Length) / 2)) -ForegroundColor Cyan
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host " QUAN LY HEN GIO BAT/TAT WIFI " -ForegroundColor Yellow
+    Write-Host "============================================" -ForegroundColor Cyan
+    Write-Host "1. Nhap gio hen tat va bat Wi-Fi"
+    Write-Host "2. Hien thi gio da hen"
+    Write-Host "3. Xoa tat ca gio da hen"
+    Write-Host "0. Thoat"
+    Write-Host "============================================" -ForegroundColor Cyan
 }
 
 # Lấy đường dẫn của thư mục chứa file gốc
@@ -73,6 +37,21 @@ function Schedule-WiFi {
         return
     }
 
+    $currentTime = Get-Date
+    $offTime = [datetime]::ParseExact($hourOff, "HH:mm", $null)
+    $onTime = [datetime]::ParseExact($hourOn, "HH:mm", $null)
+
+    if ($offTime -lt $currentTime) {
+        $offTime = $offTime.AddDays(1)  # Đặt thời gian tắt vào ngày hôm sau
+    }
+    if ($onTime -lt $currentTime) {
+        $onTime = $onTime.AddDays(1)  # Đặt thời gian bật vào ngày hôm sau
+    }
+
+    # Tạo chuỗi thời gian đúng định dạng
+    $formattedOffTime = $offTime.ToString("HH:mm")
+    $formattedOnTime = $onTime.ToString("HH:mm")
+
     $wifiAdapter = Get-NetAdapter | Where-Object { $_.Name -like "*Wi-Fi*" -and $_.Status -ne "Disconnected" }
     if (-not $wifiAdapter) {
         Write-Host "Khong tim thay adapter Wi-Fi. Vui long kiem tra lai." -ForegroundColor Red
@@ -80,11 +59,11 @@ function Schedule-WiFi {
     }
 
     # Tạo tác vụ tắt Wi-Fi với quyền admin
-    schtasks /Create /TN "TurnOffWiFi" /TR "powershell.exe -ExecutionPolicy Bypass -File '$offScript'" /SC DAILY /ST $hourOff /F /RL HIGHEST /RU "SYSTEM"
+    schtasks /Create /TN "TurnOffWiFi" /TR "powershell.exe -ExecutionPolicy Bypass -File '$offScript'" /SC DAILY /ST $formattedOffTime /F /RL HIGHEST /RU "SYSTEM"
     # Tạo tác vụ bật Wi-Fi với quyền admin
-    schtasks /Create /TN "TurnOnWiFi" /TR "powershell.exe -ExecutionPolicy Bypass -File '$onScript'" /SC DAILY /ST $hourOn /F /RL HIGHEST /RU "SYSTEM"
+    schtasks /Create /TN "TurnOnWiFi" /TR "powershell.exe -ExecutionPolicy Bypass -File '$onScript'" /SC DAILY /ST $formattedOnTime /F /RL HIGHEST /RU "SYSTEM"
 
-    Write-Host "Da them gio hen tat: $hourOff va bat: $hourOn thanh cong." -ForegroundColor Green
+    Write-Host "Da them gio hen tat: $formattedOffTime va bat: $formattedOnTime thanh cong." -ForegroundColor Green
 }
 
 # Hàm hiển thị giờ đã hẹn
