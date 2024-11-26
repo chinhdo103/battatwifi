@@ -1,11 +1,13 @@
-# Chuong trinh PowerShell quan ly hen gio bat/tat Wi-Fi
+# Đường dẫn tới thư mục script
+$scriptDirectory = $PSScriptRoot
+$offScript = Join-Path -Path $scriptDirectory -ChildPath "TurnOffWiFi.ps1"
+$onScript = Join-Path -Path $scriptDirectory -ChildPath "TurnOnWiFi.ps1"
+
+# Kiểm tra quyền Admin
 $runAsAdmin = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 $adminRole = [Security.Principal.WindowsBuiltInRole]::Administrator
-
 if (-not $runAsAdmin.IsInRole($adminRole)) {
-    # Neu khong co quyen admin, yeu cau chay lai voi quyen admin
-    $arguments = [Environment]::GetCommandLineArgs()
-    Start-Process powershell -ArgumentList $arguments -Verb runAs
+    Start-Process powershell -ArgumentList "-ExecutionPolicy Bypass -File $PSCommandPath" -Verb runAs
     Exit
 }
 
@@ -33,73 +35,50 @@ if (-not (Check-Login)) {
     Exit
 }
 
-# Ham hien thi menu
+	
+# Hàm hiển thị menu
 function Show-Menu {
     Clear-Host
     Write-Host "============================================" -ForegroundColor Cyan
-    Write-Host " QUAN LY HEN GIO BAT/TAT WIFI " -ForegroundColor Yellow
+    Write-Host " QUAN LY HEN GIO TAT WIFI " -ForegroundColor Yellow
     Write-Host "============================================" -ForegroundColor Cyan
-    Write-Host "1. Nhap gio hen tat va bat Wi-Fi (dinh dang 24h: hh:mm)"
-    Write-Host "2. Hien thi ten cac file da hen"
-    Write-Host "3. Xoa tat ca gio da hen"
-    Write-Host "4. Bat Wi-Fi thu cong"
+    Write-Host "1. Nhap gio hen tat Wi-Fi va tu dong bat lai khi khoi dong hoac dang nhap"
+    Write-Host "2. Xoa tat ca gio da hen"
     Write-Host "0. Thoat chuong trinh"
     Write-Host "============================================" -ForegroundColor Cyan
 }
 
-# Lay duong dan cua thu muc chua file goc
-$scriptDirectory = $PSScriptRoot
-
-# Duong dan day du toi cac tep TurnOffWiFi.ps1 va TurnOnWiFi.ps1
-$offScript = Join-Path -Path $scriptDirectory -ChildPath "TurnOffWiFi.ps1"
-$onScript = Join-Path -Path $scriptDirectory -ChildPath "TurnOnWiFi.ps1"
-
-# Ham chinh sua dieu kien "Start the task only if the computer is on AC power"
+# Hàm chỉnh sửa điều kiện AC Power
 function Remove-ACPowerCondition {
     param (
         [string]$taskName
     )
     $taskXml = schtasks /Query /TN $taskName /XML | Out-String
-
-    $taskXml = $taskXml -replace '<StartWhenAvailable>true</StartWhenAvailable>', '<StartWhenAvailable>false</StartWhenAvailable>'
     $taskXml = $taskXml -replace '<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>', '<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>'
-    $taskXml = $taskXml -replace '<StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>', '<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>'
-
     $tempFile = [System.IO.Path]::GetTempFileName()
     Set-Content -Path $tempFile -Value $taskXml
     schtasks /Create /TN $taskName /XML $tempFile /F
     Remove-Item $tempFile
 }
 
-# Ham them gio tat va bat Wi-Fi
-function Schedule-WiFi {
+# Hàm thêm giờ tắt Wi-Fi và tự bật khi khởi động hoặc đăng nhập
+function Schedule-TurnOffWiFi {
     $hourOff = Read-Host "Nhap gio tat Wi-Fi (hh:mm, VD: 23:00)"
-    $hourOn = Read-Host "Nhap gio bat Wi-Fi (hh:mm, VD: 06:00)"
-
-    if (-not ($hourOff -match "^\d{1,2}:\d{2}$" -and $hourOn -match "^\d{1,2}:\d{2}$")) {
+    if (-not ($hourOff -match "^\d{1,2}:\d{2}$")) {
         Write-Host "Thoi gian nhap khong hop le. Vui long nhap theo dinh dang hh:mm." -ForegroundColor Red
         return
     }
 
     $currentTime = Get-Date
     $offTime = [datetime]::ParseExact($hourOff, "HH:mm", $null)
-    $onTime = [datetime]::ParseExact($hourOn, "HH:mm", $null)
 
     if ($offTime -lt $currentTime) {
         $offTime = $offTime.AddDays(1)
     }
 
-    if ($onTime -lt $currentTime) {
-        $onTime = $onTime.AddDays(1)
-    }
-
-    if ($onTime -lt $offTime) {
-        $onTime = $onTime.AddDays(1)
-    }
-
     $formattedOffTime = $offTime.ToString("HH:mm")
-    $formattedOnTime = $onTime.ToString("HH:mm")
 
+    # Tạo tác vụ tắt Wi-Fi
     schtasks /Create `
         /TN "TurnOffWiFi" `
         /TR "powershell.exe -ExecutionPolicy Bypass -File '$offScript'" `
@@ -107,64 +86,36 @@ function Schedule-WiFi {
         /F /RL HIGHEST /RU "SYSTEM" `
         /IT
 
+    Remove-ACPowerCondition -taskName "TurnOffWiFi"
+
+    Write-Host "Da them gio hen tat Wi-Fi: $formattedOffTime thanh cong." -ForegroundColor Green
+
+    # Tạo tác vụ bật Wi-Fi khi khởi động hoặc đăng nhập
     schtasks /Create `
-        /TN "TurnOnWiFi" `
+        /TN "TurnOnWiFiAtLogon" `
         /TR "powershell.exe -ExecutionPolicy Bypass -File '$onScript'" `
-        /SC DAILY /ST $formattedOnTime `
+        /SC ONLOGON `
         /F /RL HIGHEST /RU "SYSTEM" `
         /IT
 
-    Remove-ACPowerCondition -taskName "TurnOffWiFi"
-    Remove-ACPowerCondition -taskName "TurnOnWiFi"
-
-    Write-Host "Da them gio hen tat: $formattedOffTime va bat: $formattedOnTime thanh cong." -ForegroundColor Green
+    Write-Host "Tac vu tu dong bat Wi-Fi khi khoi dong hoac dang nhap da duoc tao." -ForegroundColor Green
 }
 
-# Ham hien thi ten file da hen
-function Show-ScheduledTimes {
-    Clear-Host
-    Write-Host "============================================" -ForegroundColor Cyan
-    Write-Host " CAC FILE DA HEN " -ForegroundColor Yellow
-    Write-Host "============================================" -ForegroundColor Cyan
-
-    $tasks = schtasks /Query /FO LIST | Select-String "TurnOnWiFi|TurnOffWiFi"
-    if ($tasks -ne $null) {
-        Write-Host "Ban da hen gio"
-       
-    } else {
-        Write-Host "Khong co gio hen nao duoc tim thay." -ForegroundColor Red
-    }
-    Pause
-}
-
-# Ham bat Wi-Fi thu cong
-function BatWiFi {
-    $wifiAdapter = Get-NetAdapter | Where-Object { $_.Name -like "*Wi-Fi*" -and $_.Status -eq "Disabled" }
-    if ($wifiAdapter) {
-        Enable-NetAdapter -Name $wifiAdapter.Name -Confirm:$false
-        Write-Host "Wi-Fi da duoc bat." -ForegroundColor Green
-    } else {
-        Write-Host "Khong tim thay adapter Wi-Fi hoac no da duoc bat." -ForegroundColor Red
-    }
-}
-
-# Ham xoa tat ca gio da hen
+# Hàm xóa tất cả tác vụ đã hẹn
 function Remove-ScheduledTimes {
     schtasks /Delete /TN "TurnOffWiFi" /F > $null
-    schtasks /Delete /TN "TurnOnWiFi" /F > $null
+    schtasks /Delete /TN "TurnOnWiFiAtLogon" /F > $null
     Write-Host "Da xoa tat ca gio hen thanh cong." -ForegroundColor Green
     Pause
 }
 
-# Chuong trinh chinh
+# Chương trình chính
 do {
     Show-Menu
-    $choice = Read-Host "Vui long chon (0-4)"
+    $choice = Read-Host "Vui long chon (0-2)"
     switch ($choice) {
-        "1" { Schedule-WiFi }
-        "2" { Show-ScheduledTimes }
-        "3" { Remove-ScheduledTimes }
-        "4" { BatWiFi }
+        "1" { Schedule-TurnOffWiFi }
+        "2" { Remove-ScheduledTimes }
         "0" { Write-Host "Thoat chuong trinh. Tam biet!" -ForegroundColor Yellow; Exit }
         default { Write-Host "Lua chon khong hop le. Vui long thu lai!" -ForegroundColor Red }
     }
